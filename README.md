@@ -28,12 +28,36 @@ updated via 02-update-bash-tools.sh For better console performance
 updated via 03-upate-spamassassin.sh
 Adds marking & scoring for
 - Promotional Tagging
-- MX Domain Check for FROM and TO
+- MX Domain Check for FROM and TO from relay_domain
 - Multiple FROM address in name & email-address
 - From address not same Reply To
 - From address not having common/same domain for Reply-To
 - Also adding extra content filter from header/subject/body using ti-spam-filter
 
+## locales setup to en_US.UTF-8
+updated via 04-set-locales.sh in case you want en_US.UTF-8 
+- LC_TYPE
+- LC_LANG
+- LC_ALL
+
+## time server setup
+updated via 05-time-server-setup.sh 
+- update time via time-ntp
+- update zone to Asia/Kolkata
+- update also php to Asia/Kolkata 
+
+## extra smtp-store MTA setup
+updated via 06-smtpstore-services.sh using qpsmtpd
+- useful to store all double bounce for review
+- useful for honeypot scanning
+- useful to avoid blacklist of MX IP i
+- useful to avoid delivery of double bounce to  wrong From/Sender getting failure due to spammers mis-use
+
+## ip-to-location
+ useful get country details via ip2location lite DB for blocking ip or range of country spamming.
+
+## sample-files
+sample eciar virus and spam content for checking filter service
 
 ## import-blacklist-tools
 Add Blacklist of email,domain,IP, from console;
