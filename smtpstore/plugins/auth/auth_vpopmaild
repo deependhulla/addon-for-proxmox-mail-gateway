@@ -1,0 +1,149 @@
+#!perl -w
+
+use strict;
+use warnings;
+
+use Qpsmtpd::Constants;
+use IO::Socket;
+use version;
+my $VERSION = qv('1.0.4');
+
+sub register {
+    my ($self, $qp, %args) = @_;
+
+    $self->{_vpopmaild_host} = $args{host} || 'localhost';
+    $self->{_vpopmaild_port} = $args{port} || '89';
+
+    $self->register_hook('auth-plain', 'auth_vpopmaild');
+    $self->register_hook('auth-login', 'auth_vpopmaild');
+
+    #$self->register_hook('auth-cram-md5', 'auth_vpopmaild'); # not supported
+}
+
+sub auth_vpopmaild {
+    my ($self, $transaction, $method, $user, $passClear, $passHash, $ticket) =
+      @_;
+
+    if (!$passClear) {
+        $self->log(LOGINFO, "skip: vpopmaild does not support cram-md5");
+        return DECLINED;
+    }
+
+    my $socket = $self->get_socket() or return DECLINED;
+
+    $self->log(LOGDEBUG, "attempting $method");
+
+    # Get server greeting (+OK)
+    my $response = $self->get_response( $socket, '' )
+        or return DECLINED;
+
+    if ($response !~ /^\+OK/) {
+        $self->log(LOGERROR, "skip, bad connection response: $response");
+        close $socket;
+        return DECLINED;
+    }
+
+    print $socket "login $user $passClear\n\r";  # send login details
+    $response = $self->get_response( $socket, "login $user $passClear\n\r" )
+        or return DECLINED;
+
+    close $socket;
+
+    # check for successful login (single line (+OK) or multiline (+OK+))
+    if ($response =~ /^\+OK/) {
+        $self->log(LOGINFO, "pass, clear");
+        return OK, 'auth_vpopmaild';
+    }
+
+    chomp $response;
+    $self->log(LOGNOTICE, "fail, $response");
+    return DECLINED;
+}
+
+sub get_response {
+    my ($self, $socket, $send) = @_;
+
+    print $socket $send if $send;     # send request
+    my $response = <$socket>;         # get response
+    chomp $response;
+
+    if ( ! defined $response ) {
+        $self->log(LOGERROR, "error, no connection response");
+        close $socket;
+        return;
+    }
+
+    if ($response =~ /^([ -~\n\r]+)$/) { # match ascii printable
+        $response = $1;                  # $response now untainted
+    }
+    else {
+        $self->log(LOGERROR, "error, response unsafe.");
+    };
+
+    return $response;
+}
+
+sub get_socket {
+    my ($self) = @_;
+
+    # create socket
+    my $socket =
+      IO::Socket::INET->new(
+                            PeerAddr => $self->{_vpopmaild_host},
+                            PeerPort => $self->{_vpopmaild_port},
+                            Proto    => 'tcp',
+                            Type     => SOCK_STREAM
+                           )
+      or do {
+        $self->log(LOGERROR, "skip, socket connection to vpopmaild failed");
+        return;
+      };
+    return $socket;
+}
+
+__END__
+
+=head1 NAME
+
+auth_vpopmaild - Authenticate to vpopmaild
+
+=head1 DESCRIPTION
+
+Authenticates the user against against vpopmaild [1] daemon.
+
+=head1 CONFIGURATION
+
+Add a line to C<config/plugins> as follows:
+
+auth_vpopmaild
+
+By default, the plugin connects to localhot on port 89. If your vpopmaild
+daemon is running on a different host or port, specify as follows:
+
+auth_vpopmaild host [host] port [port]
+
+=head1 SEE ALSO
+
+For an overview of the vpopmail authentication plugins and their merits,
+please read the VPOPMAIL section in doc/authentication.pod
+
+=head1 LINKS
+
+[1] http://www.qmailwiki.org/Vpopmaild
+
+=head1 AUTHOR
+
+Robin Bowes <robin.bowes@yo61.com>
+
+2012 Matt Simerson (updated response parsing, added logging)
+
+2013 Matt Simerson - split get_response and get_socket into new methods, added taint checking to responses
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (c) 2010 Robin Bowes
+
+This plugin is licensed under the same terms as the qpsmtpd package itself.
+Please see the LICENSE file included with qpsmtpd for details.
+
+=cut

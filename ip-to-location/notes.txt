@@ -1,0 +1,8 @@
+## check for IP from which country and if need drop on MX server using iptables in block-internationalip.sh
+
+
+example (china ip) : php get-country-from-ip.php 111.44.44.44
+
+
+
+

@@ -1,0 +1,32 @@
+#!perl -w
+
+use strict;
+use warnings;
+
+use Qpsmtpd::Constants;
+
+my $r;
+
+sub register_tests {
+    my $self = shift;
+
+    eval 'use Mail::SPF';
+    return if $@;
+
+    $self->register_test('test_is_special_recipient');
+}
+
+sub test_is_special_recipient {
+    my $self = shift;
+
+    my $transaction = $self->qp->transaction;
+    my $address     = Qpsmtpd::Address->new('user@example.com');
+
+    ok( ! $self->is_special_recipient( $address ), "not special");
+
+    foreach my $user ( qw/ postmaster abuse mailer-daemon root / ) {
+        $address = Qpsmtpd::Address->new("$user\@example.com");
+        ok( $self->is_special_recipient( $address ), "special: $user");
+    }
+}
+

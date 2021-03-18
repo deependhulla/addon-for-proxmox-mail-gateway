@@ -1,0 +1,6 @@
+### Score 5 points to mail with from and TO headers are of same domain on MX Server
+loadplugin MultipleFromAT /etc/mail/spamassassin/MultipleFromAT/MultipleFromAT.pm
+header MultipleFromAT eval:check_for_MultipleFromAT()
+score MultipleFromAT 2.0
+describe MultipleFromAT  From Address has multiple From address
+

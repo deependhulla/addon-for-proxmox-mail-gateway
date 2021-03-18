@@ -1,0 +1,203 @@
+#!perl -w
+
+=head1 NAME
+
+Domain-based Message Authentication, Reporting and Conformance
+
+=head1 SYNOPSIS
+
+DMARC is a reliable means to authenticate email.
+
+=head1 DESCRIPTION
+
+From the DMARC Draft: "DMARC operates as a policy layer atop DKIM and SPF. These technologies are the building blocks of DMARC as each is widely deployed, supported by mature tools, and is readily available to both senders and receivers. They are complementary, as each is resilient to many of the failure modes of the other."
+
+DMARC provides a way to exchange authentication information and policies among mail servers.
+
+DMARC benefits domain owners by preventing others from impersonating them. A domain owner can reliably tell other mail servers that "it it doesn't originate from this list of servers (SPF) and it is not signed (DKIM), then [ignore|quarantine|reject] it." DMARC also provides domain owners with a means to receive feedback and determine that their policies are working as desired.
+
+DMARC benefits mail server operators by providing them with a more reliable (than SPF or DKIM alone) means to block forged emails. Is that message really from PayPal, Chase, Gmail, or Facebook? Since those organizations publish DMARC policies, operators have a definitive means to know.
+
+=head1 HOWTO
+
+=head2 Protect a domain with DMARC
+
+See Section 10 of the draft: Domain Owner Actions
+
+ 1. Deploy DKIM & SPF
+ 2. Ensure identifier alignment.
+ 3. Publish a "monitor" record, ask for data reports
+ 4. Roll policies from monitor to reject
+
+=head3 Publish a DMARC policy
+
+_dmarc  IN TXT "v=DMARC1; p=reject; rua=mailto:dmarc-feedback@example.com;"
+
+ v=DMARC1;    (version)
+ p=none;      (disposition policy : reject, quarantine, none (monitor))
+ sp=reject;   (subdomain policy: default, same as p)
+ adkim=s;     (dkim alignment: s=strict, r=relaxed)
+ aspf=r;      (spf  alignment: s=strict, r=relaxed)
+ rua=mailto: dmarc-feedback@example.com; (aggregate reports)
+ ruf=mailto: dmarc-feedback@example.com; (forensic reports)
+ rf=afrf;     (report format: afrf, iodef)
+ ri=8400;     (report interval)
+ pct=50;      (percent of messages to filter)
+
+=head2 Validate messages with DMARC
+
+1. install Mail::DMARC
+
+2. install this plugin
+
+3. activate this plugin. (add to config/plugins, listing it after SPF & DKIM. Check that SPF and DKIM are configured to not reject mail.
+
+=head1 CONFIGURATION
+=head2 reporting [ 0 | 1 ]
+
+Default: 1
+
+0: do not save and publish aggregate reports
+
+1: publish reports (requires proper Mail::DMARC configuration)
+
+=head1 MORE INFORMATION
+
+http://www.dmarc.org/draft-dmarc-base-00-02.txt
+
+https://github.com/smtpd/qpsmtpd/wiki/DMARC-FAQ
+
+=head1 TODO
+
+ reject messages with multiple From: headers
+
+=head1 AUTHORS
+
+ 2013 - Matt Simerson <msimerson@cpan.org>
+
+=cut
+
+use strict;
+use warnings;
+
+use English qw/-no_match_vars/;
+use Qpsmtpd::Constants;
+
+sub register {
+    my ($self, $qp, @args) = @_;
+
+    $self->log(LOGERROR, "Bad arguments") if @args % 2;
+    $self->{_args} = {@args};
+
+    $self->{_args}{reject} = 1 if !defined $self->{_args}{reject};
+    $self->{_args}{reject_type} ||= 'perm';
+    $self->{_args}{p_vals} = {map { $_ => 1 } qw/ none reject quarantine /};
+    
+    $self->{_args}{reporting} = 1 if !defined $self->{_args}{reporting};
+
+    eval 'require Mail::DMARC::PurePerl';
+    if ( $@ ) {
+        $self->log(LOGERROR, "failed to load Mail::DMARC::PurePerl" );
+    }
+    else {
+        $self->{_dmarc} = Mail::DMARC::PurePerl->new();
+        $self->register_hook('data_post_headers', 'check_dmarc');
+        $self->register_hook('data_post', 'reject_dmarc');
+    };
+}
+
+sub check_dmarc {
+    my ($self, $transaction) = @_;
+
+    if ( $self->qp->connection->relay_client() ) {
+        $self->log(LOGINFO, "skip, relay client" );
+        return DECLINED;  # don't report to ourself
+    };
+
+    my $dmarc = $self->{_dmarc};
+    $dmarc->init();
+    my $from = $transaction->header->get('From');
+    if ( ! $from ) {
+        $self->log(LOGINFO, "skip, null sender" );
+        return $self->get_reject("empty from address, null sender?");
+    };
+    eval { $dmarc->header_from_raw( $from ); };
+    if ( $@ ) {
+        $self->log(LOGERROR, "unparseable from header: $from" );
+        return $self->get_reject("unparseable from header");
+    };
+    my @recipients = $transaction->recipients;
+    eval { $dmarc->envelope_to( lc $recipients[0]->host ); }; # optional
+    eval { $dmarc->envelope_from( $transaction->sender->host ); }; # may be <>
+    eval { $dmarc->spf( $transaction->notes('dmarc_spf') ); };
+    my $dkim = $self->connection->notes('dkim_verifier');
+    if ( $dkim ) { eval { $dmarc->dkim( $dkim ); }; };
+    $dmarc->source_ip( $self->qp->connection->remote_ip );
+    eval { $dmarc->validate(); };
+    if ( $EVAL_ERROR ) {
+        $self->log(LOGERROR, $@ );
+        return DECLINED if $self->is_immune;
+        return $self->get_reject( $@ );
+    };
+
+#$self->log(LOGINFO, "result: " . Dumper( $dmarc ) );
+
+    my $pol;
+    eval { $pol = $dmarc->result->published; };
+    if ( $self->{_args}{reporting} && $pol ) {
+        if ( $pol->rua && $dmarc->has_valid_reporting_uri($pol->rua) ) {
+            eval { $dmarc->save_aggregate(); };
+            $self->log(LOGERROR, $@ ) if $@;
+        }
+        else {
+            $self->log(LOGERROR, "has policy, no report URI" );
+        };
+    };
+
+    $transaction->notes('dmarc_result', $dmarc->result);
+    my $disposition = $dmarc->result->disposition;
+    my $result = $dmarc->result->result;
+    my $auth_str = "dmarc=$result";
+       $auth_str .= " (p=" . $pol->p . ")" if $pol;
+
+    if ( $dmarc->result->result eq 'pass' ) {
+        $self->log(LOGINFO, "pass");
+        $self->store_auth_results( $auth_str . " d=" . $dmarc->header_from);
+        return DECLINED;
+    };
+
+    my $reason_type = my $comment = '';
+    if ( $dmarc->result->reason && $dmarc->result->reason->[0] ) {
+        $reason_type = $dmarc->result->reason->[0]->type;
+        if ( $dmarc->result->reason->[0]->comment ) {
+            $comment = $dmarc->result->reason->[0]->comment;
+        };
+    };
+    if ( $disposition eq 'none' && $comment && $comment eq 'no policy') {
+        $self->log(LOGINFO, "skip, no policy");
+        return DECLINED;
+    };
+
+    my $log_mess    = $dmarc->result->result;
+    $log_mess   .= ", tolerated" if $disposition eq 'none';
+    $log_mess   .= ", $reason_type" if $reason_type;
+    $log_mess   .= ", $comment"  if $comment;
+    $self->log(LOGINFO, $log_mess);
+
+    $self->store_auth_results( $auth_str . " d=" . $dmarc->header_from);
+
+    return DECLINED if $disposition eq 'none';
+    return DECLINED if ! $disposition;  # for safety
+    return DECLINED if $self->is_immune;
+
+    $self->adjust_karma(-3);
+    # Add a mark now so the data_post hook can do the real reject
+    $transaction->notes('reject_dmarc', '1');
+}
+
+sub reject_dmarc {
+    my ($self, $transaction) = @_;
+    return $self->get_reject("failed DMARC policy")
+        if ($transaction->notes('reject_dmarc'));
+    return DECLINED;
+}

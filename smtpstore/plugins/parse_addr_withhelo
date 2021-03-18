@@ -1,0 +1,71 @@
+#!perl -w
+
+=head1 NAME
+
+parse_addr_withhelo
+
+=head1 SYNOPSIS
+
+strict RFC 821 forbids parameters after the
+
+   MAIL FROM:<user@example.net>
+ and
+   RCPT TO:<someone@example.com>
+
+load this plugin to enforce, else the default EHLO parsing with
+parameters is done.
+
+=cut
+
+use strict;
+use warnings;
+
+use Qpsmtpd::Constants;
+
+sub hook_mail_parse {
+    my $self = shift;
+    return OK, \&_parse if $self->qp->connection->hello eq 'helo';
+    return DECLINED;
+}
+
+sub hook_rcpt_parse {
+    my $self = shift;
+    return OK, \&_parse if $self->qp->connection->hello eq 'helo';
+    return DECLINED;
+}
+
+sub _parse {
+    my ($self, $cmd, $line) = @_;
+    $self->log(LOGDEBUG, "_parse() cmd=[$cmd], line=[$line]");
+    if ($cmd eq 'mail') {
+        if ($line !~ s/^from:\s*//i) {
+            return DENY, "Syntax error in command";
+        };
+    }
+    else {    # cmd eq 'rcpt'
+        return DENY, "Syntax error in command" if $line !~ s/^to:\s*//i;
+    }
+
+    if ($line =~ s/^(<.*>)\s*//) {
+        return DENY, "No parameters allowed in " . uc($cmd) if $line =~ /^\S/;
+        return OK, $1;  # $1 is captured address
+    }
+
+    ## now, no <> are given
+    $line =~ s/\s*$//;
+    if ($line =~ /\@/) {
+        if ($line =~ /\@\S+\s+\S/) {
+            return DENY, "No parameters allowed in " . uc($cmd);
+        };
+        return OK, $line;
+    }
+
+    if ($cmd eq 'mail') {
+        return OK, '<>' if !$line;    # 'MAIL FROM:' -> 'MAIL FROM:<>'
+        return DENY, "Could not parse your MAIL FROM command";
+    }
+
+    if ($line !~ /^(postmaster|abuse)$/i) {
+        return DENY, "Could not parse your RCPT TO command";
+    };
+}

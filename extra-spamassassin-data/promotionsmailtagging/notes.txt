@@ -1,0 +1,11 @@
+
+## add below lines in /etc/mail/spamassassin/local.cf
+
+loadplugin PromotionsMailTagging /etc/mail/spamassassin/promotionsmailtagging/PromotionsMailTagging.pm
+header PROMOTIONSMAILTAG eval:check_for_promotions()
+score PROMOTIONSMAILTAG 0.1
+describe PROMOTIONSMAILTAG Looks like Promotions Mail
+add_header all Promotions _PROMOTAGVAL_
+add_header all PromotionsDetails _PROMODETAILS_
+
+

@@ -1,0 +1,68 @@
+#!perl -w
+
+=head1 NAME
+
+stunnel - stunnel proxy protocol client ip helper.
+
+=head1 DESCRIPTION
+
+stunnel proxy protocol remote ip,port setting feature added for smtps.
+reference : http://www.stunnel.org/static/stunnel.html
+protocol spec : http://haproxy.1wt.eu/download/1.5/doc/proxy-protocol.txt
+
+config/plugins file example
+stunnel proxy on
+...
+
+=head1 CONFIGURATION
+
+=head2 proxy [ ON | OFF ]
+
+proxy protocol handler on/off
+
+=cut
+
+use strict;
+use warnings;
+use Qpsmtpd::Constants;
+
+sub register {
+    my ($self, $qp, %args) = @_;
+
+    return if uc $args{proxy} ne 'ON';
+
+    $self->log(LOGINFO, "proxy protocol enabled");
+
+    $self->register_hook('unrecognized_command', 'stunnel');
+}
+
+sub stunnel {
+    my ($self, $transaction, $cmd, @args) = @_;
+
+    return OK              if uc $cmd ne 'PROXY';
+    return DENY_DISCONNECT if $self->connection->remote_ip() ne '127.0.0.1';
+    return DENY_DISCONNECT if $self->connection->notes('proxy');
+
+    # TCP4 192.168.41.227 10.27.11.106 50060 465
+    if ($args[0] !~ m/^(.*?) (.*?) (.*?) (.*?) (.*?)$/) {
+        return DENY_DISCONNECT;
+    }
+
+    $self->connection->remote_ip($2);
+    $self->connection->remote_port($4);
+    $self->connection->remote_info("[$2]");
+
+    $self->connection->notes('proxy',       'YES');
+    $self->connection->notes('protocol',    $1);
+    $self->connection->notes('remote_ip',   $2);
+    $self->connection->notes('local_ip',    $3);
+    $self->connection->notes('remote_port', $4);
+    $self->connection->notes('local_port',  $5);
+    $self->log(LOGINFO, "stunnel : $2:$4");
+
+    # DNS reverse
+    my @ptrs = $self->resolve_ptr($self->connection->remote_ip);
+    $self->connection->remote_host($ptrs[0]);
+    return DONE;
+}
+

@@ -1,0 +1,5 @@
+loadplugin MXDomainCheckFromTo /etc/mail/spamassassin/mxdomaincheckfromto/MXDomainCheckFromTo.pm
+header MXDomainCheckFromTo eval:check_for_MXDomainCheckFromTo()
+score MXDomainCheckFromTo 2.0
+describe MXDomainCheckFromTo Looks like From and To are same and of our MX domain
+

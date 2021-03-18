@@ -1,0 +1,79 @@
+#!perl -w
+
+use strict;
+use warnings;
+
+use Qpsmtpd::Constants;
+
+sub register_tests {
+    my $self = shift;
+
+    $self->register_test('test_hook_connect');
+    $self->register_test('test_ip_whitelisted');
+    $self->register_test('test_is_set_rblsmtpd');
+    $self->register_test('test_reject_type');
+}
+
+sub test_ip_whitelisted {
+    my $self = shift;
+
+    $self->qp->connection->remote_ip('192.168.99.5');
+    ok( $self->ip_whitelisted(), "+");
+
+    $self->qp->connection->remote_ip('192.168.99.6');
+    ok( ! $self->ip_whitelisted(), "-");
+
+    $self->qp->connection->remote_ip('192.168.99.5');
+    $self->qp->connection->notes('whitelisthost', 'hello honey!');
+    ok( $self->ip_whitelisted(), "+");
+    $self->qp->connection->notes('whitelisthost', undef);
+}
+
+sub test_is_set_rblsmtpd {
+    my $self = shift;
+
+    $self->qp->connection->remote_ip('10.1.1.1');
+    ok( ! defined $self->is_set_rblsmtpd('10.1.1.1'), "undef");
+
+    $ENV{RBLSMTPD} = "Yes we can!";
+    cmp_ok( 'Yes we can!','eq',$self->is_set_rblsmtpd('10.1.1.1'), "value");
+
+    $ENV{RBLSMTPD} = "Oh yeah?";
+    cmp_ok( 'Oh yeah?','eq',$self->is_set_rblsmtpd('10.1.1.1'), "value");
+
+    $ENV{RBLSMTPD} = '';
+    cmp_ok( 1,'==',$self->is_set_rblsmtpd('10.1.1.1'), "empty");
+}
+
+sub test_hook_connect {
+    my $self = shift;
+
+    # reset values that other tests may have fiddled with
+    my $conn = $self->qp->connection;
+    $conn->relay_client(0);        # other tests may leave it enabled
+    $conn->notes('whitelisthost', undef );
+    $conn->notes('whitelistsender', undef);
+    $conn->notes('naughty', undef);
+    $conn->remote_ip('127.0.0.2'); # standard dnsbl test value
+
+    my ($rc, $mess) = $self->hook_connect($self->qp->transaction);
+    if ( $rc == DENY ) {
+        cmp_ok( $rc, '==', DENY, "connect +");
+    }
+    else {
+        ok( 1, "connect +, skipped (is DNS working?)" );
+    }
+}
+
+sub test_reject_type {
+    my $self = shift;
+
+    $self->{_args}{reject_type} = undef;
+    cmp_ok( $self->get_reject_type(), '==', DENY, "default");
+
+    $self->{_args}{reject_type} = 'temp';
+    cmp_ok( $self->get_reject_type(), '==', DENYSOFT, "defer");
+
+    $self->{_args}{reject_type} = 'disconnect';
+    cmp_ok( $self->get_reject_type(), '==', DENY_DISCONNECT, "disconnect");
+}

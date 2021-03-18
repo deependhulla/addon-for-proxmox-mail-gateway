@@ -1,0 +1,211 @@
+#!/usr/bin/perl
+package Karma;
+
+use strict;
+use warnings;
+
+use Data::Dumper;
+use Net::IP qw(:PROC);
+use POSIX qw(strftime);
+
+use lib 'lib';
+use Qpsmtpd::Base;
+use Qpsmtpd::DB;
+
+my $base = Qpsmtpd::Base->new();
+my $self = bless({args => {db_dir => 'config'},}, 'Karma');
+my $command = $ARGV[0];
+
+if (!$command) {
+    $self->usage();
+}
+elsif ($command eq 'capture') {
+    $self->capture($ARGV[1]);
+}
+elsif ($command eq 'release') {
+    $self->release($ARGV[1]);
+}
+elsif ($command eq 'prune') {
+    $self->prune_db($ARGV[1] || 7);
+}
+elsif ($command eq 'search' && is_ip($ARGV[1])) {
+    $self->show_ip($ARGV[1]);
+}
+elsif ($command eq 'list' | $command eq 'search') {
+    $self->main();
+}
+
+exit(0);
+
+sub usage {
+    print <<EO_HELP
+ karma_tool [ list search prune capture release ]
+
+list takes no arguments.
+
+search [ naughty nice both <ip> ]
+  and returns a list of matching IPs
+
+capture [ IP ]
+  sends an IP to the penalty box
+
+release [ IP ]
+  remove an IP from the penalty box
+
+prune takes no arguments.
+  prunes database of entries older than 7 days
+
+EO_HELP
+      ;
+}
+
+sub db {
+    my ( $self ) = @_;
+    return $self->{db} if $self->{db};
+    $self->{db} = Qpsmtpd::DB->new( name => 'karma' );
+    $self->{db}->candidate_dirs(
+        $self->{args}{db_dir},
+        qw( /var/lib/qpsmtpd/karma ./var/db ./config . ) );
+    my $path = $self->{db}->path;
+    print "using karma db at $path\n";
+    return $self->{db};
+}
+
+sub capture {
+    my $self = shift;
+    my $ip = shift or return;
+    is_ip($ip) or do {
+        warn "not an IP: $ip\n";
+        return;
+    };
+
+    $self->db->lock;
+    my $key  = $self->get_karma_key($ip);
+
+    my ($penalty_start_ts, $naughty, $nice, $connects) = split /:/,
+      $self->db->get( $key );
+
+    $self->db->set( $key, join(':', time, $naughty + 1, $nice, $connects) );
+    $self->db->unlock;
+}
+
+sub release {
+    my $self = shift;
+    my $ip = shift or return;
+    is_ip($ip) or do { warn "not an IP: $ip\n"; return; };
+
+    $self->db->lock;
+    my $key  = $self->get_karma_key($ip);
+
+    my ($penalty_start_ts, $naughty, $nice, $connects) = split /:/,
+      $self->db->get( $key );
+
+    $self->db->set( $key, join(':', 0, 0, $nice, $connects) );
+    $self->db->unlock;
+}
+
+sub show_ip {
+    my $self = shift;
+    my $ip   = shift or return;
+    $self->db->lock;
+
+    my $key  = $self->get_karma_key($ip);
+
+    my ($penalty_start_ts, $naughty, $nice, $connects) = split /:/,
+      $self->db->get( $key );
+    $self->db->unlock;
+    $naughty  ||= 0;
+    $nice     ||= 0;
+    $connects ||= 0;
+    my $time_human = '';
+    if ($penalty_start_ts) {
+        $time_human = strftime "%a %b %e %H:%M", localtime $penalty_start_ts;
+    }
+    my $hostname = $base->resolve_ptr($ip);
+    print
+"      IP Address                 Penalty        Naughty  Nice  Connects  Hostname\n";
+    printf(" %-18s  %24s    %3s     %3s     %3s    %-30s\n",
+           $ip, $time_human, $naughty, $nice, $connects, $hostname);
+}
+
+sub main {
+    my $self = shift;
+
+    $self->db->lock;
+    my %totals;
+
+    print
+"      IP Address                 Penalty        Naughty  Nice  Connects  Hostname\n";
+    foreach my $r ( $self->db->get_keys ) {
+        my $ip = ip_bintoip(ip_inttobin($r, 4), 4);
+        my ($penalty_start_ts, $naughty, $nice, $connects) = split /:/,
+          $self->db->get( $r );
+        $naughty  ||= '';
+        $nice     ||= '';
+        $connects ||= '';
+        my $time_human = '';
+        if ($command eq 'search') {
+            my $search = $ARGV[1];
+            if ($search eq 'nice') {
+                next if !$nice;
+            }
+            elsif ($search eq 'naughty') {
+                next if !$naughty;
+            }
+            elsif ($search eq 'both') {
+                next if !$naughty || !$nice;
+            }
+            elsif (is_ip($ARGV[1]) && $search ne $ip) {
+                next;
+            }
+        }
+        if ($penalty_start_ts) {
+            $time_human = strftime "%a %b %e %H:%M",
+              localtime $penalty_start_ts;
+        }
+        my $hostname = '';
+        if ($naughty && $nice) {
+            # this can be slow, waiting for each IP to resolve
+            #$hostname = $base->resolve_ptr($ip);
+        }
+        printf(" %-18s  %24s    %3s     %3s     %3s    %30s\n",
+               $ip, $time_human, $naughty, $nice, $connects, $hostname);
+        $totals{naughty}  += $naughty  if $naughty;
+        $totals{nice}     += $nice     if $nice;
+        $totals{connects} += $connects if $connects;
+    }
+    $self->db->unlock;
+    print Dumper(\%totals);
+}
+
+sub is_ip {
+    my $ip = shift || $ARGV[0];
+    new Net::IP($ip) or return;
+    return 1;
+}
+
+sub get_karma_key {
+    my $self = shift;
+    my $nip = Net::IP->new(shift) or return;
+    return $nip->intip;    # convert IP to an int
+}
+
+sub prune_db {
+    my $self       = shift;
+    my $prune_days = shift;
+
+    $self->db->lock;
+    my $count = $self->db->size;
+
+    my $pruned = 0;
+    foreach my $key ( $self->db->get_keys ) {
+        my ($ts, $naughty, $nice, $connects) = split /:/, $self->db->get( $key );
+        my $days_old = (time - $ts) / 86400;
+        next if $days_old < $prune_days;
+        $self->db->delete( $key );
+        $pruned++;
+    }
+    $self->db->unlock;
+    warn "pruned $pruned of $count DB entries";
+}
+

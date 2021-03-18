@@ -1,0 +1,115 @@
+#!perl -w
+
+use strict;
+use warnings;
+
+use Mail::Header;
+
+use Qpsmtpd::Constants;
+use Qpsmtpd::Transaction;
+
+sub register_tests {
+    my $self = shift;
+
+    eval 'use ClamAV::Client';  ## no critic (Stringy)
+    if (!$@) {
+        warn "Could not load ClamAV::Client";
+        $self->register_test('test_register');
+        $self->register_test('test_get_clamd');
+    }
+
+    $self->register_test('test_err_and_return');
+    $self->register_test('test_get_filename');
+    $self->register_test('test_set_permission');
+    $self->register_test('test_is_too_big');
+    $self->register_test('test_is_multipart');
+    $self->register_test('test_should_scan');
+}
+
+sub test_register {
+    my $self = shift;
+    
+    ok( $self->{_args}{deny_viruses},   "deny_viruses 1");
+    is( $self->{_args}{max_size}, 1024, "max_size 1");
+    ok( $self->{_args}{scan_all},       "scan_all 1");
+
+    my $qp = $self->qp;
+
+    # Re-initialize the plugin with some different options
+    $self->register($qp,qw( scan_all 0 max_size 200 deny_viruses no));
+    ok( ! $self->{_args}{deny_viruses}, "deny_viruses 2");
+    is( $self->{_args}{max_size}, 200,  "max_size 2");
+    ok( !$self->{_args}{scan_all},      "scan_all 2");
+}
+
+sub test_err_and_return {
+    my $self = shift;
+
+    $self->{_args}{defer_on_error} = 1;
+    my ($code, $mess) = $self->err_and_return( "test oops" );
+    cmp_ok( DENYSOFT, '==', $code, "oops ($mess)");
+
+    $self->{_args}{defer_on_error} = 0;
+    ($code, $mess) = $self->err_and_return( "test oops" );
+    cmp_ok( DECLINED, '==', $code, "oops ($mess)");
+}
+
+sub test_get_filename {
+    my $self = shift;
+    my $tran = $self->qp->transaction();
+    $tran->{_body_array} = ['line','two'];
+
+    my $filename = $self->get_filename();
+    ok( $filename, "get_filename ($filename)" );
+}
+
+sub test_set_permission {
+    my $self = shift;
+    ok( $self->set_permission(), "set_permission" );
+}
+
+sub test_get_clamd {
+    my $self = shift;
+    my $clamd = $self->get_clamd();
+    ok( ref $clamd, "get_clamd: " . ref $clamd );
+}
+
+sub test_is_too_big {
+    my $self = shift;
+    my $tran = Qpsmtpd::Transaction->new();
+
+    $self->{_args}{max_size} = 8;
+    $tran->{_body_size} = 7 * 1024;
+    ok( ! $self->is_too_big( $tran ), "is_too_big 1");
+
+    $tran->{_body_size} = 9 * 1024;
+    ok( $self->is_too_big( $tran ), "is_too_big 2");
+}
+
+sub test_is_multipart {
+    my $self = shift;
+    my $tran = Qpsmtpd::Transaction->new();
+
+    ok( ! $self->is_multipart($tran), "is_multipart 1" );
+    $tran->header( Mail::Header->new( [
+        'Content-Type: multipart/alternative; boundary="Jx3Wbb8BMHsO=_?:"'
+    ] ) );
+    ok( $self->is_multipart($tran), "is_multipart 2" );
+}
+
+sub test_should_scan {
+    my $self = shift;
+    my $trans = Qpsmtpd::Transaction->new();
+    $trans->{_body_size} = 1;
+    $self->{_args}{scan_all} = 1;
+    ok( $self->should_scan($trans), "Should scan small message, scan_all=1");
+    $self->{_args}{scan_all} = 0;
+    ok( ! $self->should_scan($trans), "Should not scan small message, scan_all=0");
+    $trans->{_body_size} = 99999999999;
+    ok( !$self->should_scan($trans), "Should not scan large message" );
+    $trans->{_body_size} = 1;
+    $trans->header( Mail::Header->new( [
+        'Content-Type: multipart/alternative; boundary="Jx3Wbb8BMHsO=_?:"'
+    ] ) );
+    ok( $self->should_scan($trans), "Should not scan multi-part message" );
+}
