@@ -1,0 +1,4 @@
+run below script and update PMG who-object blacklist
+
+php update-pmg-with-who-object-blacklist.php 
+
