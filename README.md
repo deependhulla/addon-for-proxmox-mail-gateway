@@ -50,7 +50,7 @@ updated via 05-time-server-setup.sh
 updated via 06-smtpstore-services.sh using qpsmtpd
 - useful to store all double bounce for review
 - useful for honeypot scanning
-- useful to avoid blacklist of MX IP i
+- useful to avoid blacklist of MX IP
 - useful to avoid delivery of double bounce to  wrong From/Sender getting failure due to spammers mis-use
 
 ## ip-to-location
