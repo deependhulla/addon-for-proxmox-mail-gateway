@@ -1,4 +1,4 @@
-# addon-for-proxmox-mail-gateway6
+# addon-for-proxmox-mail-gateway
 Addon For Proxmox Mail Gateway for More filter
 
 ## Extra Packages 
@@ -16,6 +16,13 @@ updated via 01-extra-packages.sh for easy management & troubleshooting
  - sendemail , a command line smtp sendemail
  - clamav-unofficial-sigs ..optional
  
+ ## extra bash script and tools
+updated via 02-update-bash-tools.sh For better console performance
+- interactive shell like RHEL/CentOS
+- rc.local setup , in case to work out something after bootup.
+- vim config update for copy-paste via console , by disabling visual feature.
+- Perl Cpan auto-commit for cpan use.
+- SSH keeplive update to avoid quick disconnection
  
 ## extra spamassassin data
 updated via 03-upate-spamassassin.sh
