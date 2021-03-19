@@ -1,0 +1,358 @@
+#!/usr/bin/perl -w
+##################
+# pfHandle - Postfix mail queue handler wrapper program
+# written by carl.thompson@rackspace.com
+##################
+
+use strict;
+use Getopt::Std;
+use vars qw/%OPTIONS $pfdir $Version/;
+$pfdir   = "/var/spool/postfix";
+$Version = "20090923:1744";
+
+&Parse_Switches;
+
+#####
+
+sub Parse_Switches
+{
+    my $available_options;
+    $available_options = "abcdD:fF:hlm:NP:sS:v";
+    getopts($available_options, \%OPTIONS) || &Usage;
+    &Usage()   if $OPTIONS{'h'};
+    &Version() if $OPTIONS{'v'};
+    &List_Queue('', $OPTIONS{'N'}) if $OPTIONS{'l'};
+    &Process_Queue() if $OPTIONS{'f'};
+    &List_Queue('active',   $OPTIONS{'N'}) if $OPTIONS{'a'};
+    &List_Queue('bounce',   $OPTIONS{'N'}) if $OPTIONS{'b'};
+    &List_Queue('corrupt',  $OPTIONS{'N'}) if $OPTIONS{'c'};
+    &List_Queue('deferred', $OPTIONS{'N'}) if $OPTIONS{'d'};
+    &List_Queue('incoming', $OPTIONS{'N'}) if $OPTIONS{'i'};
+    &List_Queue('',         'stats')       if $OPTIONS{'s'};
+    &Display_Message($OPTIONS{'m'})    if $OPTIONS{'m'};
+    &Delete_Message($OPTIONS{'D'})     if $OPTIONS{'D'};
+    &Delete_From_Sender($OPTIONS{'F'}) if $OPTIONS{'F'};
+    &Delete_By_Subject($OPTIONS{'S'})  if $OPTIONS{'S'};
+    &Purge_Queue($OPTIONS{'P'})        if $OPTIONS{'P'};
+    if (!%OPTIONS) { &Usage; }
+    exit 0;
+}
+
+sub Usage
+{
+    print qq(Usage: pfHandle [OPTION]
+Example: pfHandle -v
+
+Available options:
+  -a						list the current active mail queue
+  -b						list the current bounce mail queue
+  -c						list the current corrupt mail queue
+  -d						list the current deferred mail queue
+  -D #						delete the email message
+  -f						try to reprocess queued messages now 
+  -F sender					delete all mail from this email address
+  -h						show this help message
+  -l						list all the current mail queues
+  -m #						display the email message
+  -N						display only the message IDs
+  -P [hold|incoming|active|deferred]		purge all messages from the mail queue
+  -s						display the mail queue statistics
+  -S subject					delete all mail with this in the subject
+  -v						version information
+);
+    exit 1;
+}
+
+sub Purge_Queue
+{
+    my $queue = shift;
+    $queue =~ tr/A-Z/a-z/;
+    if ($queue !~ /^(hold|incoming|active|deferred)$/)
+    {
+        print
+          "Please specify a valid queue to purge, [hold|incoming|active|deferred|all]\n";
+        exit;
+    }
+    print "Do you really want to purge the $queue queue?: [y,N] ";
+    my $really = <STDIN>;
+    chomp($really);
+    if ($really eq "y" || $really eq "Y")
+    {
+        qx|postsuper -d ALL $queue|;
+    }
+    exit;
+}
+
+sub Version
+{
+    print "pfHandle version $Version\n";
+    exit;
+}
+
+sub Get_Queue
+{
+    my $queue = shift;
+    my $do    = shift;
+    my ($entity, @qlist, %from, %sender, %to, %subject, %date, %size, $count);
+    if ($queue ne "deferred")
+    {
+        my (@qlist1);
+        opendir(QUEUE, "$pfdir/$queue");
+        @qlist1 = grep(!/^\.$/, grep(!/^\.\.$/, readdir(QUEUE)));
+        closedir(QUEUE);
+        foreach (@qlist1)
+        {
+            my ($test) = qx|file $pfdir/$queue|;
+            if ($test !~ /directory/) { push(@qlist, $_); }
+        }
+    } else
+    {
+        my (@subdirs);
+        opendir(QUEUE, "$pfdir/$queue");
+        push(@subdirs, grep(!/^\.$/, grep(!/^\.\.$/, readdir(QUEUE))));
+        closedir(QUEUE);
+        foreach (@subdirs)
+        {
+            opendir(QUEUE, "$pfdir/$queue/$_");
+            push(@qlist, grep(!/^\.$/, grep(!/^\.\.$/, readdir(QUEUE))));
+            closedir(QUEUE);
+        }
+    }
+    foreach $entity (@qlist)
+    {
+        my @lines = qx|postcat -q $entity|;
+        foreach (@lines)
+        {
+            chomp($_);
+            if ((/^sender:/) && (!$sender{$entity}))
+            {
+                $_ =~ s/^sender:\s+//;
+                $sender{$entity} = $_;
+            }
+            if ((/^From:/) && (!$from{$entity}))
+            {
+                $_ =~ s/^From:\s+//;
+                $from{$entity} = $_;
+            }
+            if ((/^To:/) && (!$to{$entity}))
+            {
+                $_ =~ s/To:\s+//;
+                $to{$entity} = $_;
+            }
+            if ((/^Subject:/) && (!$subject{$entity}))
+            {
+                $_ =~ s/^Subject:\s+//;
+                $subject{$entity} = $_;
+            }
+            if ((/^Date:/) && (!$date{$entity}))
+            {
+                $_ =~ s/^Date:\s+//;
+                $date{$entity} = $_;
+            }
+            if ((/^message_size:/) && (!$size{$entity}))
+            {
+                $_ =~ s/^[^\d]+(\d+).*/$1/;
+                $size{$entity} = $1;
+            }
+        }
+    }
+    if ($do ne "stats")
+    {
+        foreach (@qlist)
+        {
+            print "$_\n";
+            if (!$do)
+            {
+                print "\treturn_path: $sender{$_}\n";
+                print "\tFrom: $from{$_}\n";
+                print "\tTo: $to{$_}\n";
+                print "\tSubject: $subject{$_}\n";
+                print "\tDate: $date{$_}\n";
+                print "\tSize: $size{$_} bytes\n";
+            }
+        }
+    }
+    return ($#qlist + 1);
+}
+
+sub List_Queue
+{
+    my $queue = shift;
+    my $do    = shift;
+    if (!$do) { $do = 0; }
+    my ($count, %queue);
+    my ($cmsg, $cstat, $cend) = ("\e[01;34m", "\e[01;31m", "\e[00m");
+    if ($queue)
+    {
+        $count = &Get_Queue($queue, $do);
+        $queue{$queue} = $count;
+    } else
+    {
+        my @queues = ('hold','active', 'bounce', 'corrupt', 'deferred');
+        foreach (@queues)
+        {
+            if ($do ne "stats")
+            {
+                print $cstat;
+                print "####################\n";
+                print "##### \U$_\n";
+                print "####################\n";
+                print $cend;
+            }
+            my $c = &Get_Queue($_, $do);
+            $count += $c;
+            $queue{$_} = $c;
+        }
+    }
+    print "Total Messages: $count\n";
+    foreach (keys %queue)
+    {
+if($_ eq "hold")
+{
+my $dvdx="ls -lh /var/spool/postfix/hold/ | wc -l";
+my $dvdy=`$dvdx`;
+$dvdy =~ s/\n/""/eg;
+$dvdy = $dvdy - 1 ;
+$queue{$_}=$dvdy;
+}
+
+
+        print "$_ Queue Messages: $queue{$_}\n";
+    }
+}
+
+sub Process_Queue
+{
+    qx|postqueue -f|;
+}
+
+sub Display_Message
+{
+    my $mid   = shift;
+    my @lines = qx|postcat -q $mid|;
+    print @lines;
+}
+
+sub Delete_Message
+{
+    my $mid = shift;
+    qx|postsuper -d $mid|;
+    return;
+}
+
+sub Delete_From_Sender
+{
+    my $sender = shift;
+    &Delete("From", $sender);
+}
+
+sub Delete_By_Subject
+{
+    my $subject = shift;
+    &Delete("Subject", $subject);
+}
+
+sub Delete
+{
+    my $field  = shift;
+    my $data   = shift;
+    my @queues = ('active', 'bounce', 'corrupt', 'deferred');
+    my $queue;
+    foreach $queue (@queues)
+    {
+        my ($entity, @qlist);
+        if ($queue ne "deferred")
+        {
+            opendir(QUEUE, "$pfdir/$queue");
+            @qlist = grep(!/^\.$/, grep(!/^\.\.$/, readdir(QUEUE)));
+            closedir(QUEUE);
+        } else
+        {
+            my (@subdirs);
+            opendir(QUEUE, "$pfdir/$queue");
+            push(@subdirs, grep(!/^\.$/, grep(!/^\.\.$/, readdir(QUEUE))));
+            closedir(QUEUE);
+            foreach (@subdirs)
+            {
+                opendir(QUEUE, "$pfdir/$queue/$_");
+                push(@qlist, grep(!/^\.$/, grep(!/^\.\.$/, readdir(QUEUE))));
+                closedir(QUEUE);
+            }
+        }
+        foreach $entity (@qlist)
+        {
+            my $test  = 0;
+            my @lines = qx|postcat -q $entity|;
+            foreach (@lines)
+            {
+                chomp($_);
+                if (/^$field:/)
+                {
+                    if (/^$field:.*$data.*/)
+                    {
+                        &Delete_Message($entity);
+                    }
+                    last;
+                }
+            }
+        }
+    }
+}
+
+################################################################################
+################################  DOCUMENTATION  ###############################
+################################################################################
+
+=head1 NAME
+
+pfHandle - perl script to manage the postfix mail queue
+
+=head1 SYNOPSIS
+
+pfHandle [OPTION]
+
+=head1 DESCRIPTION
+
+This is a program that encorporates all the various built in tools of Postfix in a
+single program and extends this functionality with some additional options.
+
+=head1 OPTIONS
+
+=over 8
+
+=item -a						list the current active mail queue
+
+=item -b						list the current bounce mail queue
+
+=item -c						list the current corrupt mail queue
+
+=item -d						list the current deferred mail queue
+
+=item -D #						delete the email message
+
+=item -f						try to reprocess queued messages now 
+
+=item -F sender					delete all mail from this email address
+
+=item -h						show this help message
+
+=item -l						list all the current mail queues
+
+=item -m #						display the email message
+
+=item -N						display only the message IDs
+
+=item -P [hold|incoming|active|deferred]	purge all messages from the mail queue
+
+=item -s						display the mail queue statistics
+
+=item -S subject					delete all mail with this in the subject
+
+=item -v						version information
+
+=head1 AUTHORS
+
+=item Carl Thompson carl.thompson@rackspace.com
+
+=cut
+
