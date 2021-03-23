@@ -3,7 +3,7 @@
 apt-get update
 
 ## basic extra package for troubleshooting and data copy and mangement
-apt-get -y install git mc iptraf screen vim ethtool net-tools sshfs wget elinks
+apt-get -y install git mc iptraf screen vim ethtool net-tools sshfs wget elinks dos2unix unbound dnsutils
 
 ## php only cli tool for fast and easy scrpting
 apt-get -y install php-cli

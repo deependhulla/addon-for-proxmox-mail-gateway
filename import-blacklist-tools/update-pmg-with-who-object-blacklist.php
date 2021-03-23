@@ -18,6 +18,14 @@ $al=json_decode($gl, true);
 #print_r($al);
 #print "\n ----\n";
 
+## Remove Ctrl-M key and NULL from file
+$fe=str_replace("\r","",$fe);
+$fe=str_replace("\0","",$fe);
+$fd=str_replace("\r","",$fd);
+$fd=str_replace("\0","",$fd);
+$fi=str_replace("\r","",$fi);
+$fi=str_replace("\0","",$fi);
+
 ########## work on email adding
 $otype=1001;$oid='email';
 $ai=0;$an=0;

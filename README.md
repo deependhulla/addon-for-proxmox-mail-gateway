@@ -11,9 +11,12 @@ updated via 01-extra-packages.sh for easy management & troubleshooting
  - ethtool to check ethernet
  - iptraf for bandwidth and traffic monitoring
  - elinks for console browsing
- - net-tools , old style tools like ifconfig
- - php-cli , for easy and fast scripting tools
- - sendemail , a command line smtp sendemail
+ - net-tools, old style tools like ifconfig
+ - php-cli, for easy and fast scripting tools
+ - sendemail, a command line smtp sendemail
+ - dos2unix, a command line tool to change MS-Windows/DOS copy paste content to Unix Format , i.e. without Ctrl-M char.
+ - unbound, useful for internal DNS chaching 
+ - dnsutils, dig like too for DNS troubleshooting
  - clamav-unofficial-sigs ..optional
  
  ## extra bash script and tools
