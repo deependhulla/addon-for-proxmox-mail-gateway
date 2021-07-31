@@ -11,6 +11,10 @@ apt-get -y install php-cli
 #command line sendemail tool
 apt-get -y install sendemail
 
+## copy pfHandle tool and etc-backup script
+cp extra-tools/etc-config-backup.sh /bin/
+cp extra-tools/pfHandle /bin/
+
 
 ## clamav-unofficial-sigs
 ## you can install via apt-get install but please checkout
