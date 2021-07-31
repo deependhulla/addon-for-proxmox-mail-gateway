@@ -4,7 +4,7 @@
 ### Score 2 points to mail with reply-to and from headers are not the same domain
 loadplugin FromNotReplyToSameDomain /etc/mail/spamassassin/fromnotreplyto/FromNotReplyToSameDomain.pm
 header FROM_NOT_REPLYTO_SAME_DOMAIN eval:check_for_from_not_reply_to_same_domain()
-score FROM_NOT_REPLYTO_SAME_DOMAIN 2.0
+score FROM_NOT_REPLYTO_SAME_DOMAIN 0.01
 describe FROM_NOT_REPLYTO_SAME_DOMAIN From domain: does not match Reply-To: domain
 
 

@@ -3,7 +3,7 @@
 ### Score 1 points to mail with reply-to and from headers are not the same
 loadplugin FromNotReplyTo /etc/mail/spamassassin/fromnotreplyto/FromNotReplyTo.pm
 header FROM_NOT_REPLYTO eval:check_for_from_not_reply_to()
-score FROM_NOT_REPLYTO 1.0
+score FROM_NOT_REPLYTO 0.01
 describe FROM_NOT_REPLYTO From: does not match Reply-To:
 
 
