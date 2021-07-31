@@ -1,5 +1,5 @@
 # addon-for-proxmox-mail-gateway
-Addon For Proxmox Mail Gateway for More filter
+Addon For Proxmox Mail Gateway 7.x for More filter
 
 ## Extra Packages 
 updated via 01-extra-packages.sh for easy management & troubleshooting
