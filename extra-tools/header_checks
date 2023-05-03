@@ -1,6 +1,6 @@
-/^subject:/      INFO
-/^to:/           INFO
-/^from:/         INFO
 /^Subject:/      INFO
 /^To:/           INFO
 /^From:/         INFO
+/^X-MailScanner-QID:/   INFO
+/^X-CASPER-MailScanner-ID:/     INFO
+/^Message-ID:/  INFO
